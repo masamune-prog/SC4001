@@ -57,8 +57,29 @@ def main() -> None:
     p.add_argument("--af3-dir", default=".", help="root holding AF3_outputs/")
     p.add_argument("--dataset", default="final_dataset.csv")
     p.add_argument("--out", default="features_folds.csv")
-    p.add_argument("--chain1", default="A")
-    p.add_argument("--chain2", default="B")
+    # score_fold treats chain1 as the target and chain2 as the binder, and
+    # labels its plddt_*_target / plddt_*_binder / n_*_tokens outputs from that.
+    #
+    # These are the DEPOSIT's folds, whose chain order is the opposite of this
+    # project's own (af3_io writes target=A, binder=B).  In the deposit
+    # binder_chain == "A" and target_chains == ["B"]; checked against the folds
+    # themselves, chain A's token count equals the CSV's A_length (the binder)
+    # and chain B's equals B_length (the target) for every single-target design.
+    # So here the target is B and the binder is A.
+    #
+    # The E0 gate itself is unaffected either way: ipsae_min/max/mean are
+    # symmetric in the two chains, since swapping them only swaps the two
+    # directional scores the min/max/mean are taken over.  Verified on the
+    # deposit's folds -- the ipSAE values are bit-identical under the swap.
+    #
+    # Everything else moved.  plddt_*_target and plddt_*_binder and
+    # n_*_tokens were simply exchanged, and the ipae_* block changed value
+    # outright, because PAE is NOT symmetric: pae[i,j] != pae[j,i], so the
+    # inter-chain block and its transpose have different means and minima.
+    # Five of these (plddt_mean/min_target, plddt_mean/min_binder,
+    # n_binder_tokens) plus the four ipae_* entries are in AF3_FEATURES.
+    p.add_argument("--chain1", default="B", help="target chain (deposit: B)")
+    p.add_argument("--chain2", default="A", help="binder chain (deposit: A)")
     p.add_argument("--cutoff", type=float, default=PAE_CUTOFF)
     p.add_argument("--gate", action="store_true",
                    help="E0: validate against the deposit's own ipSAE values")

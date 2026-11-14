@@ -5,7 +5,7 @@ change in the CSV header does not break every downstream script.  If a required
 field cannot be resolved the error message lists the columns that *are* present.
 
 Retention funnel implemented here (section 3.2 of the report):
-    3,766 deposited  ->  3,669 with available scores  ->  3,532 against 13 targets
+    3,676 deposited  ->  3,669 with available scores  ->  3,532 against 13 targets
                                                           after excluding pMHC.
 """
 
@@ -20,16 +20,36 @@ import pandas as pd
 
 # --- column resolution -------------------------------------------------------
 
+# The deposit's *actual* column names are listed FIRST in each entry, so the
+# exact-match pass resolves them before the loose contains-match fallback ever
+# runs.  That ordering is load-bearing -- see the two traps below.
+#
+# Trap 1: chain roles are inverted relative to this project's own convention.
+# In the deposit, binder_chain == "A" and target_chains == ["B"], and msa_info
+# reads ["A:no_msa", "B:run_msa"] -- the binder is chain A and the *target* is
+# chain B.  So binder_seq is A_seq and target_seq is B_seq.  Confirmed by the
+# cardinalities: A_seq has 3,669 distinct values (one per design) while B_seq
+# has 19 (one per target construct).  Getting this backwards silently swaps the
+# ablated channel and every downstream number is meaningless.
+#
+# Trap 2: "binder" is the deposit's *label* column (True/False), not a
+# sequence.  It must not appear among the binder_seq aliases: the old table
+# listed it there, and because "binder" is an exact column name it would have
+# won the exact-match pass and loaded the label as the binder sequence.
 ALIASES = {
-    "design_id": ["design_id", "design", "name", "id", "binder_name", "design_name"],
-    "target": ["target", "target_name", "receptor", "target_id"],
-    "binder_seq": ["binder_seq", "binder_sequence", "sequence", "binder"],
-    "target_seq": ["target_seq", "target_sequence", "receptor_sequence"],
-    "label": ["label", "binds", "binder_label", "experimental_outcome",
-              "outcome", "success", "is_binder"],
+    "design_id": ["binder_id", "design_id", "design", "binder_name",
+                  "design_name", "name"],
+    "target": ["target_id", "target", "target_name", "receptor"],
+    # chain A is the binder, chain B is the target -- see Trap 1 above.
+    "binder_seq": ["a_seq", "binder_seq", "binder_sequence"],
+    "target_seq": ["b_seq", "target_seq", "target_sequence",
+                   "receptor_sequence"],
+    # "binder" is the deposit's label column -- see Trap 2 above.
+    "label": ["binder", "label", "binds", "binder_label",
+              "experimental_outcome", "outcome", "success", "is_binder"],
     # scores carried through from the deposit (used by the E0 validation gate)
-    "ipsae_min_deposit": ["ipsae_min", "ipsae_af3_min", "af3_ipsae_min"],
-    "ipsae_max_deposit": ["ipsae_max", "ipsae_af3_max", "af3_ipsae_max"],
+    "ipsae_min_deposit": ["af3_ipsae_min", "ipsae_min", "ipsae_af3_min"],
+    "ipsae_max_deposit": ["af3_ipsae_max", "ipsae_max", "ipsae_af3_max"],
 }
 
 # Targets excluded in section 3.2: short presented peptides make alignment
@@ -52,10 +72,17 @@ def resolve(df: pd.DataFrame, key: str, required: bool = True) -> str | None:
     for cand in ALIASES[key]:
         if cand in lowered:
             return lowered[cand]
-    # fall back to a loose contains-match
+    # Fall back to a loose contains-match -- but say so.  A silent loose match
+    # is how a schema change turns into wrong numbers rather than a crash: the
+    # generic alias "id" happily matches "binder_id", and would just as happily
+    # have matched some other *_id column had the header been ordered
+    # differently.  Announce every fallback so it can be checked.
     for cand in ALIASES[key]:
         for low, orig in lowered.items():
             if cand in low:
+                print(f"[dataset] WARNING {key!r} resolved loosely: alias "
+                      f"{cand!r} matched column {orig!r}. Verify this is the "
+                      f"intended column.", file=sys.stderr)
                 return orig
     if required:
         raise KeyError(
@@ -104,7 +131,7 @@ def load_dataset(path: str, keep_pmhc: bool = False,
             df[extra] = pd.to_numeric(raw[cols[extra]], errors="coerce")
 
     n0 = len(df)
-    # 3,766 -> 3,669: drop designs with no deposited scores.
+    # 3,676 -> 3,669: drop designs with no deposited scores.
     if require_scores and "ipsae_min_deposit" in df:
         df = df[df["ipsae_min_deposit"].notna()]
     n1 = len(df)
