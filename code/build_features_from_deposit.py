@@ -23,32 +23,79 @@ import sys
 import numpy as np
 import pandas as pd
 
-from dataset import carry_through_columns, load_dataset
+from dataset import carry_through_columns, load_dataset, resolve
 
-# The 16 design-side features, with the aliases the deposit is likely to use.
+# Prefixes marking a column computed FROM a predicted structure.  A design-side
+# feature is by definition available before any structure prediction, so a
+# feature resolving into one of these is not a naming quirk -- it is a leak of
+# prediction-derived information into the "input" block, and it silently
+# inflates anything trained on it.  The deposit carries an af2_/af3_/colab_/
+# boltz1_ twin of almost every input_ column, so the loose fallback below will
+# hit one unless it is told not to.
+PREDICTION_PREFIXES = ("af2_", "af3_", "colab_", "boltz1_")
+
+# The 16 design-side features.  The deposit's own column name is listed FIRST so
+# the exact-match pass wins before the loose contains-match is ever reached.
+#
+# Two of these were silently mis-resolving before the deposit's names were
+# pinned here, and both were worse than an outright miss:
+#   * shape_complementarity matched "camsol_score", because the two-letter
+#     alias "sc" is a substring of "_score" -- so shape complementarity and
+#     camsol were the same column twice over.  It is input_rosetta_interface_sc.
+#   * n_interface_res matched "af2_pymol_num_interface_residues", an
+#     AlphaFold2-derived count, i.e. exactly the leak described above.
 INPUT_FEATURES = {
     "binder_len":        ["binder_len", "binder_length", "length_binder"],
     "target_len":        ["target_len", "target_length", "length_target"],
-    "rosetta_dG":        ["dg", "ddg", "interface_dg", "rosetta_dg", "binding_energy"],
-    "shape_complementarity": ["shape_complementarity", "sc", "interface_sc"],
-    "packstat":          ["packstat", "interface_packstat"],
-    "dSASA":             ["dsasa", "interface_dsasa", "delta_sasa"],
-    "dG_over_SASA":      ["dg_sasa", "dg_per_sasa", "interface_dg_sasa"],
-    "unsat_hbonds":      ["unsat", "unsathbonds", "interface_hbond_unsat",
+    "rosetta_dG":        ["input_rosetta_interface_dg", "interface_dg",
+                          "rosetta_dg", "binding_energy", "dg"],
+    "shape_complementarity": ["input_rosetta_interface_sc",
+                              "shape_complementarity", "interface_sc"],
+    "packstat":          ["input_rosetta_interface_packstat", "packstat",
+                          "interface_packstat"],
+    "dSASA":             ["input_rosetta_interface_dsasa", "dsasa",
+                          "interface_dsasa", "delta_sasa"],
+    "dG_over_SASA":      ["input_rosetta_interface_dg_sasa_ratio", "dg_sasa",
+                          "dg_per_sasa", "interface_dg_sasa"],
+    "unsat_hbonds":      ["input_rosetta_interface_unsat_hbonds", "unsat",
+                          "unsathbonds", "interface_hbond_unsat",
                           "delta_unsat_hbonds"],
-    "binder_score":      ["binder_score", "monomer_score"],
-    "surface_hydrophobicity": ["surface_hydrophobicity", "hydrophobicity"],
-    "sap":               ["sap", "sap_score", "aggregation_sap"],
-    "camsol":            ["camsol", "camsol_score", "solubility"],
-    "n_interface_res":   ["n_interface_res", "interface_residues", "n_contacts"],
-    "interface_area":    ["interface_area", "buried_area", "bsa"],
-    "interface_hbonds":  ["interface_hbonds", "hbonds", "n_hbonds"],
-    "interface_polar_frac": ["interface_polar", "polar_fraction", "frac_polar"],
+    "binder_score":      ["input_rosetta_binder_score", "binder_score",
+                          "monomer_score"],
+    "surface_hydrophobicity": ["input_rosetta_surface_hydrophobicity",
+                               "surface_hydrophobicity", "hydrophobicity"],
+    "sap":               ["input_sap_binder", "sap", "sap_score",
+                          "aggregation_sap"],
+    "camsol":            ["camsol_score", "camsol", "solubility"],
+    "n_interface_res":   ["input_pymol_num_interface_residues",
+                          "n_interface_res", "interface_residues", "n_contacts"],
+    "interface_area":    ["input_pymol_delta_sasa", "interface_area",
+                          "buried_area", "bsa"],
+    "interface_hbonds":  ["input_rosetta_interface_interface_hbonds",
+                          "input_pymol_hbonds", "interface_hbonds", "hbonds",
+                          "n_hbonds"],
+    # The deposit stores the NONpolar percentage; the polar fraction is its
+    # complement, derived in main() rather than read off a column.
+    "interface_polar_frac": ["input_pymol_percent_nonpolar"],
 }
 
+# Features whose stored column is the complement of the feature we want, as a
+# percentage: value = 100 - column.
+COMPLEMENT_OF_PERCENT = {"interface_polar_frac"}
 
-def resolve_feature(raw: pd.DataFrame, aliases: list[str]) -> str | None:
+
+def resolve_feature(raw: pd.DataFrame, aliases: list[str],
+                    allow_prediction_derived: bool = False) -> str | None:
+    """Resolve one design-side feature to a column of the deposit.
+
+    Columns computed from a predicted structure are refused unless explicitly
+    allowed, so the loose contains-match cannot wander into an af2_/af3_ twin
+    of the intended input_ column.
+    """
     lowered = {c.lower().replace(" ", "_"): c for c in raw.columns}
+    if not allow_prediction_derived:
+        lowered = {low: orig for low, orig in lowered.items()
+                   if not low.startswith(PREDICTION_PREFIXES)}
     for al in aliases:
         if al in lowered:
             return lowered[al]
@@ -88,14 +135,16 @@ def main() -> None:
 
     base = load_dataset(a.dataset)
     raw = carry_through_columns(a.dataset)
-    key = None
-    for cand in ("design_id", "design", "name", "id"):
-        hit = [c for c in raw.columns if c.lower() == cand]
-        if hit:
-            key = hit[0]
-            break
-    if key is None:
-        sys.exit("[features] cannot find a design-id column in the deposit")
+    # Resolve the design-id column through dataset.ALIASES rather than a second,
+    # private list.  The private list only matched a column named exactly
+    # "design_id"/"design"/"name"/"id", so it failed outright on the deposit,
+    # whose column is "binder_id" -- and had it matched something else, the
+    # join below would have silently produced all-NaN features.  One alias
+    # table, one place to fix.
+    try:
+        key = resolve(raw, "design_id")
+    except KeyError as exc:
+        sys.exit(f"[features] cannot find a design-id column in the deposit:\n{exc}")
     raw = raw.assign(design_id=raw[key].astype(str).str.strip())
 
     cols, missing = {}, []
@@ -108,7 +157,11 @@ def main() -> None:
 
     feat = pd.DataFrame({"design_id": raw.design_id})
     for name, src in cols.items():
-        feat[name] = pd.to_numeric(raw[src], errors="coerce")
+        v = pd.to_numeric(raw[src], errors="coerce")
+        if name in COMPLEMENT_OF_PERCENT:
+            # stored as the nonpolar percentage; we want the polar fraction
+            v = 100.0 - v
+        feat[name] = v
 
     df = base.merge(feat, on="design_id", how="left")
     # lengths are always derivable, whatever the deposit calls them
