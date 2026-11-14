@@ -47,17 +47,49 @@ run() {
   if [[ "$DRY_RUN" == "1" ]]; then printf '  + %s\n' "$*"; else "$@"; fi
 }
 
-fetch() {               # fetch <url> <dest>  -- aria2 if present, else curl
-  local url="$1" dest="$2"
-  if [[ -s "$dest" ]]; then echo "  have $dest"; return 0; fi
+# fetch <url> <dest> [md5]  -- aria2 if present, else curl.
+#
+# The md5 is not decoration.  "Is the file non-empty?" is not the same question
+# as "is the file complete?": aria2 preallocates the full length up front, so an
+# interrupted 2 GB download leaves a file of exactly the right size full of
+# holes.  Without the checksum this function reports "have AF3_outputs.tar.zstd"
+# and the stage proceeds to tar, which fails with a decoding error that says
+# nothing about the real cause.  With it, an incomplete file is re-fetched
+# (aria2 resumes in place) and a corrupt one is reported as corrupt.
+fetch() {
+  local url="$1" dest="$2" md5="${3:-}"
+  if [[ -s "$dest" ]]; then
+    if [[ -z "$md5" ]]; then
+      echo "  have $dest"; return 0
+    fi
+    # A leftover .aria2 control file is itself proof of an unfinished transfer.
+    if [[ ! -e "$dest.aria2" ]] && \
+       [[ "$(md5sum "$dest" | cut -d' ' -f1)" == "$md5" ]]; then
+      echo "  have $dest (md5 ok)"; return 0
+    fi
+    echo "  $dest is incomplete or corrupt -- resuming"
+  fi
   if command -v aria2c >/dev/null 2>&1; then
     run aria2c "$url" --dir="$(dirname "$dest")" --out="$(basename "$dest")" \
       --max-connection-per-server=16 --split=16 --min-split-size=1M \
       --continue=true --auto-file-renaming=false --allow-overwrite=false \
-      --max-tries=10 --retry-wait=15 --console-log-level=warn
+      --max-tries=10 --retry-wait=15 --console-log-level=warn \
+      ${md5:+--checksum=md5="$md5"}
   else
     echo "  (aria2c not found -- falling back to curl, this will be slower)"
     run curl -L --fail --retry 5 -C - -o "$dest" "$url"
+  fi
+
+  # Verify after the fact too: the curl path has no checksum support, and a
+  # mismatch here means a bad file on disk, not a transient network error.
+  if [[ -n "$md5" && "$DRY_RUN" != "1" ]]; then
+    local got; got="$(md5sum "$dest" | cut -d' ' -f1)"
+    if [[ "$got" != "$md5" ]]; then
+      echo "  md5 mismatch for $dest: got $got, expected $md5" >&2
+      echo "  delete it and re-run the 'data' stage" >&2
+      exit 1
+    fi
+    echo "  md5 ok: $dest"
   fi
 }
 
@@ -69,8 +101,12 @@ require_dataset() {
 
 stage_data() {
   say "deposit: benchmark labels and reference folds"
-  fetch "$ZENODO/final_dataset.csv/content"     "$DATASET"
-  fetch "$ZENODO/AF3_outputs.tar.zstd/content"  AF3_outputs.tar.zstd
+  # md5s as published in the Zenodo record's own file metadata
+  # (https://zenodo.org/api/records/15722219).
+  fetch "$ZENODO/final_dataset.csv/content"     "$DATASET" \
+        "3a69ee9b0fecf53924a8c6479bac146e"
+  fetch "$ZENODO/AF3_outputs.tar.zstd/content"  AF3_outputs.tar.zstd \
+        "6430cbacd4ea54191e71583db5faa90d"
   if [[ ! -d AF3_outputs ]]; then
     say "unpacking the confidences jsons only (the structures are not needed)"
     run tar --zstd -xf AF3_outputs.tar.zstd \
