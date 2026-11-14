@@ -162,12 +162,33 @@ def selftest() -> None:
     ap = average_precision(y, np.argsort(-s, kind="mergesort"))
     assert abs(ap - (1 + 2/3 + 1/2) / 3) < 1e-12, ap
 
-    # all-tied scores: AUC exactly 0.5, AP equal to the positive rate in expectation
+    # All-tied scores: AUC is exactly 0.5, and the tie-broken AP must converge
+    # on the expectation of AP over a uniformly random ranking.
+    #
+    # That expectation is NOT the positive rate.  AP conditions on the ranks
+    # holding a positive, and a positive contributes to its own precision, so
+    # E[AP] under a random ranking sits strictly above prevalence; it only
+    # approaches prevalence as the number of positives grows.  For P=2, N=8 the
+    # exact value is 0.3715, not 0.2.  Comparing against prevalence here is what
+    # the earlier version of this test did, and it failed on correct code.
+    #
+    # Rather than hardcode a constant, derive it: with ten slots there are only
+    # C(10,2)=45 distinct placements, so the exact expectation is enumerable.
     y = np.array([1, 1, 0, 0, 0, 0, 0, 0, 0, 0])
     s = np.zeros(10)
     assert abs(roc_auc(y, s) - 0.5) < 1e-12
+
+    import itertools
+    n_slots, n_pos = len(y), int(y.sum())
+    exact = np.mean([
+        average_precision(
+            np.isin(np.arange(n_slots), placement).astype(int),
+            np.arange(n_slots),
+        )
+        for placement in itertools.combinations(range(n_slots), n_pos)
+    ])
     ap_t, _ = ap_tiebreak(y, s, n_draws=4000, seed=1)
-    assert abs(ap_t - 0.2) < 0.02, ap_t
+    assert abs(ap_t - exact) < 0.02, (ap_t, exact)
 
     # perfect and inverted rankings
     y = np.array([1, 1, 0, 0, 0, 0])

@@ -35,3 +35,10 @@ __pycache__/
 *.pyc
 .venv/
 SC4001.pdf
+
+# --- AlphaFold 3 model parameters -------------------------------------------
+# Access-controlled: obtained from DeepMind under terms that do not permit
+# redistribution, and this repo has a public GitHub remote. Never commit these.
+af3.bin
+af3.bin.zst
+*.bin.zst
