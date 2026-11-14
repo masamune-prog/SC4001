@@ -33,8 +33,11 @@ def main() -> None:
     p.add_argument("--dataset", default="final_dataset.csv")
     p.add_argument("--targets-dir", default="targets")
     p.add_argument("--seed", type=int, default=1)
-    p.add_argument("--keep-paired-msa", action="store_true",
-                   help="keep the paired MSA in the 'full' arm (default: keep)")
+    p.add_argument("--keep-paired-msa", action=argparse.BooleanOptionalAction,
+                   default=True,
+                   help="keep the paired MSA in the 'full' arm (default: keep). "
+                        "--no-keep-paired-msa drops it, leaving only the "
+                        "unpaired alignment.")
     a = p.parse_args()
 
     wanted = {ln.strip() for ln in Path(a.ids_file).read_text().splitlines()
@@ -60,7 +63,7 @@ def main() -> None:
                 f"target sequence; alignment and target are out of register")
 
         if a.condition == "full":
-            tgt_msa, tgt_paired = unpaired, (paired if a.keep_paired_msa else paired)
+            tgt_msa, tgt_paired = unpaired, (paired if a.keep_paired_msa else "")
         else:                                   # the ablation
             tgt_msa, tgt_paired = empty_a3m(row.target_seq), ""
 
