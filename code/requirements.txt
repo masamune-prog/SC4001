@@ -1,0 +1,8 @@
+# Analysis side only -- this is all that scoring, statistics and figures need.
+# AF3 itself (jax, haiku, ...) is installed separately by setup.sh into its own
+# environment; see AF3_PYTHON in env.sh.
+#
+# No torch: the Study B re-ranker is not part of this reconstruction.
+numpy>=1.26
+pandas>=2.0
+matplotlib>=3.8   # analyze_e2.py --figures only; imported lazily
