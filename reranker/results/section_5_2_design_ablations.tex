@@ -1,0 +1,113 @@
+% =====================================================================
+% Section 5.2 "Design ablations" -- MEASURED, 15 November 2026.
+% Replaces the \todo{run} table and the \todo paragraph in
+% SC4001_report_restructured (1).tex, lines ~823-872.
+%
+% >>> READ THIS BEFORE PASTING -------------------------------------
+% The \todo paragraph in the draft predicts four outcomes. THREE OF THEM
+% ARE CONTRADICTED by the runs. Do not paste the predicted narrative.
+%
+%   predicted: "the classic overfitting curve" against hidden width
+%   measured : a PLATEAU. linear -0.053, 16 units -0.008, 32-16 -0.004,
+%              128-64 -0.004. Quadrupling the width changes nothing.
+%              There is no overfitting-with-width curve to draw.
+%
+%   predicted: "widening the feature set buys variance, not signal"
+%   measured : true for AF3 features (5 -> 21 moves -0.029 -> -0.067),
+%              FALSE overall -- the 16 design-side features recover it
+%              to -0.004. The story is which features, not how many.
+%
+%   predicted: "the pairwise loss was validated against the pointwise
+%              alternative"
+%   measured : they are INDISTINGUISHABLE, and pointwise BCE is
+%              nominally ahead (+0.005 vs -0.004). You may justify the
+%              pairwise loss by task match; you may NOT say the
+%              comparison validated it.
+%
+%   predicted: within-target normalisation matters
+%   measured : CONFIRMED, and it is the only factor whose interval
+%              excludes zero. Pooling costs 0.126 AP.
+%
+% All runs: features_folds.csv, 3,532 designs, 13 receptors, LOTO,
+% 5 model seeds averaged per fold, 2,000-resample paired bootstrap.
+% Reproduce with reranker/run_ablations.sh.
+% =====================================================================
+
+\subsection{Design ablations: why the learned head cannot help}\label{sec:r-ablations}
+A null result is only informative if the model was given a fair chance. We therefore ablate the
+four design choices of \cref{sec:mlp} --- capacity, feature count, loss, and input normalisation
+--- holding the leave-one-target-out protocol and the feature table fixed and changing one
+choice at a time (\cref{tab:designablation}). Every run is CPU-only and takes about 80\,s.
+
+\begin{table}[H]
+  \centering
+  \caption{Re-ranker design ablations under the same leave-one-target-out protocol. Each row
+  changes one choice from the reference configuration. Intervals are target-level paired
+  bootstraps against \ipsaemin{} with 2,000 resamples; $^{*}$ marks an interval excluding zero.}
+  \label{tab:designablation}
+  \small
+  \begin{tabular}{llcc}
+    \toprule
+    Factor & Setting & Mean per-target AP $\uparrow$ & \dAP{} vs.\ \ipsaemin{} [95\% CI]\\
+    \midrule
+    --- & reference ($37\rightarrow32\rightarrow16$) & 0.545 & $-0.004$ [$-0.071$, $+0.074$]\\
+    \midrule
+    \multirow{3}{*}{Capacity}
+      & linear ($37\rightarrow1$)               & 0.496 & $-0.053$ [$-0.132$, $+0.016$]\\
+      & one hidden layer ($37\rightarrow16$)    & 0.540 & $-0.008$ [$-0.078$, $+0.058$]\\
+      & wider ($37\rightarrow128\rightarrow64$) & 0.545 & $-0.004$ [$-0.074$, $+0.076$]\\
+    \midrule
+    \multirow{3}{*}{Feature count}
+      & 5 AF3 features     & 0.519 & $-0.029$ [$-0.071$, $+0.009$]\\
+      & 21 AF3 features    & 0.481 & $-0.067$ [$-0.144$, $-0.009$]$^{*}$\\
+      & 37 (AF3 $+$ input) & 0.545 & $-0.004$ [$-0.071$, $+0.074$]\\
+    \midrule
+    \multirow{2}{*}{Loss}
+      & pairwise logistic (RankNet) & 0.545 & $-0.004$ [$-0.071$, $+0.074$]\\
+      & pointwise BCE               & 0.554 & $+0.005$ [$-0.038$, $+0.053$]\\
+    \midrule
+    \multirow{2}{*}{Normalisation}
+      & $z$-score within target & 0.545 & $-0.004$ [$-0.071$, $+0.074$]\\
+      & $z$-score pooled        & 0.418 & $-0.130$ [$-0.240$, $-0.039$]$^{*}$\\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Only one design choice matters, and it is not the architecture.} Pooling the
+$z$-scores across targets instead of within them costs 0.126 AP and is the single largest effect
+in the table --- the only architectural factor whose interval excludes zero. Pooling leaves the
+per-target score offsets in the data, so the model can lower its training loss by learning which
+receptor a design belongs to; at test time the held-out receptor is by construction one it has
+never seen, and that capacity is worse than wasted. This is the grouped-data failure of
+\cref{sec:r-ladder} reappearing inside our own model.
+
+\paragraph{Capacity does not bind.} A linear probe is the weakest arm ($-0.053$), one hidden
+layer of 16 units already recovers almost all of the gap ($-0.008$), and quadrupling the hidden
+width to $128\rightarrow64$ changes the result not at all ($-0.004$, identical to the reference
+to three decimals). We expected the classic overfitting curve on 13 effective training units and
+did not find one: the curve is a plateau. The model is not capacity-limited, and it is not
+capacity that stops it beating \ipsaemin{}.
+
+\paragraph{It is which features, not how many.} Within the AF3 block, adding features makes the
+model worse --- five confidence scores give $-0.029$, the full 21 give $-0.067$, the only arm
+besides pooled normalisation whose interval excludes zero. The 16 design-side features then
+recover the loss ($-0.004$), and they are the only features computed \emph{before} any
+prediction. So the widely-stated reading, that more features buy variance rather than signal, is
+only half right here: more \emph{AF3} features buy variance, because they are correlated
+summaries of one confidence head, while features from a different source add genuine
+information. With 13 receptors as the unit of replication the effective sample size for
+generalisation is 13, not 3,532, and that budget is spent quickly on redundant inputs.
+
+\paragraph{The loss function is not the lever either.} Pointwise BCE and the pairwise RankNet
+loss are statistically indistinguishable ($+0.005$ against $-0.004$; the intervals overlap over
+almost their whole length). We retain the pairwise loss because it matches the task --- ranking
+within a target, not calibrated classification across them --- but we report plainly that the
+comparison does not establish it as superior. The BCE arm is nominally the best configuration we
+ran, and its interval still contains zero, so it does not beat \ipsaemin{} either.
+
+\paragraph{What the grid shows.} No configuration we tried beats the score it re-ranks. The
+factors that could be blamed on us --- too little capacity, the wrong loss, too few features ---
+all move the result by less than the width of its own confidence interval, while the one factor
+that does move it is a property of how the data is grouped. That is the evidence for
+\cref{sec:r-mlp}'s reading: the ceiling is the information AF3's confidence head exposes and the
+13 receptors available to generalise over, not the model placed on top.

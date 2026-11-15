@@ -1,0 +1,26 @@
+{
+  "feature_set": "af3core",
+  "features_used": [
+    "ipsae_min",
+    "ipsae_max",
+    "iptm",
+    "ptm",
+    "pae_interaction"
+  ],
+  "n_features": 5,
+  "loss": "pairwise",
+  "epochs": 300,
+  "lr": 0.003,
+  "weight_decay": 0.01,
+  "hidden": [
+    32,
+    16
+  ],
+  "dropout": 0.2,
+  "model_seeds": 5,
+  "seed": 1,
+  "n_designs": 3532,
+  "n_targets": 13,
+  "evaluation": "leave-one-target-out",
+  "standardisation": "per-feature z-score within target"
+}
