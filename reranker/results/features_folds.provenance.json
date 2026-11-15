@@ -1,0 +1,12 @@
+{
+  "generated": "2026-11-10T08:36:24.680889+00:00",
+  "af3_dir": "C:\\Users\\samuel\\AppData\\Local\\Temp\\claude\\e60efc1e4d6f85de\\c3813cdd-517a-4498-bfb6-a20ce9f97e58\\scratchpad\\af3_json",
+  "dataset": "C:\\Users\\samuel\\AppData\\Local\\Temp\\claude\\e60efc1e4d6f85de\\c3813cdd-517a-4498-bfb6-a20ce9f97e58\\scratchpad\\zenodo_data\\final_dataset.csv",
+  "dataset_sha256": "ced0e4cdc8b97989066eeb061dd8910cf9b8d919c6535ec6064a0681dc15bfba",
+  "zenodo_record": "15722219",
+  "license": "CC-BY-4.0",
+  "ipsae": "recomputed from raw PAE via extract_features.ipsae_from_pae (10 A cutoff, report's d0)",
+  "n_designs": 3532,
+  "n_positives": 391,
+  "gates_passed": true
+}

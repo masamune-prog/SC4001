@@ -1,0 +1,13 @@
+# Install torch from the CPU index -- this model does not need a GPU, and the
+# CPU wheel is a far smaller download than the CUDA/ROCm ones:
+#
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install -r requirements.txt
+#
+torch>=2.2
+numpy>=1.24
+pandas>=2.0
+matplotlib>=3.7
+
+# Only needed to decompress the deposit's AF3_outputs.tar.zstd (optional path).
+zstandard>=0.22
